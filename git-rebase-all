@@ -90,6 +90,9 @@ echo
 # The parents of the octomerge remain in the same order through the rebase.
 branches_list=($branches)
 new_commit_list=(`git rev-parse refs/hidden/octomerge_rebased^@`)
+if [[ "${#branches_list[@]}" -ne "${#new_commit_list[@]}" ]]; then
+  die "rebased merge has been corrupted. aborting."
+fi
 for index in ${!branches_list[@]}; do
   branch=${branches_list[$index]}
   echo "moving $branch (was $(git rev-parse --short $branch))"
