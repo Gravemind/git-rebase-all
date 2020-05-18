@@ -1,12 +1,13 @@
 #!/bin/bash
 
-USAGE='<new-upstream> <root>'
+USAGE='[-i | --interactive] <new-upstream> <root>'
 OPTIONS_KEEPDASHDASH=
 OPTIONS_SPEC="\
-git rebase-all <new-upstream> <root>
+git rebase-all $USAGE
 git rebase-all --continue | --abort | --skip
 --
  Actions:
+i,interactive!  interactive
 continue!       continue
 abort!          abort and check out the original branch
 skip!           skip current patch and continue
@@ -17,6 +18,8 @@ require_work_tree_exists
 cd_to_toplevel
 
 [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || set -x
+
+interactive=0
 
 total_argc=$#
 while test $# != 0
@@ -30,6 +33,9 @@ do
     test 2 -le "$#" || usage
     onto="$2"
     shift
+    ;;
+  -i|--interactive)
+    interactive=1
     ;;
   --)
     shift
@@ -81,6 +87,8 @@ if [ $# -eq 2 ]; then
   # rebase todo list to replace the default (recusrive) merge by the magic
   # octopus merge again.
   export _GIT_REBASE_ALL_OCTOMERGE=$octomerge
+  export _GIT_REBASE_ALL_INTERACTIVE=$interactive
+  export _GIT_REBASE_ALL_EDITOR="$(git var GIT_EDITOR)"
   export -f _git-rebase-all_octopus_merge
   _git-rebase-all_editor() {
     [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || set -x
@@ -97,6 +105,10 @@ exec [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || set -x && git checkout -q --det
 
 HEREDOC
     [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || cat "$file"
+
+    if [[ "${_GIT_REBASE_ALL_INTERACTIVE}" -eq 1 ]]; then
+      bash -c "$_GIT_REBASE_ALL_EDITOR "'$@' -- "$file"
+    fi
   }
 
   # The money shot: rebase the octomerge onto the new upstream.
