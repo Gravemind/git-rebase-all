@@ -52,22 +52,57 @@ if [ $# -eq 2 ]; then
 
   echo rebasing $branches onto $new_upstream
 
-  # Use the tree from the common ancestor of all the branches. It probably
-  # doesn't matter what tree we use, but the merge-base is a) conveniently
-  # accessible and b) probably the most sensible thing. Conceptually, this
-  # equates to committing an octomerge that undoes everything the topic branches
-  # did, which is a well-defined operation.
-  merge_base=$(git merge-base $branches)
-  tree=$(git cat-file commit $merge_base | head -n1 | cut -c6-)
+  _git-rebase-all_octopus_merge() {
+    [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || set -x
+    local branches="$*"
 
-  # Create the octomerge: a temporary commit that has all the topic branches as
-  # parents.
-  octomerge=$(echo 'merging' $branches |
-    git commit-tree $tree -p `echo $branches | sed -e's/ / -p /g'`)
+    # Use the tree from the common ancestor of all the branches. It probably
+    # doesn't matter what tree we use, but the merge-base is a) conveniently
+    # accessible and b) probably the most sensible thing. Conceptually, this
+    # equates to committing an octomerge that undoes everything the topic branches
+    # did, which is a well-defined operation.
+    local merge_base=$(git merge-base $branches)
+    local tree=$(git cat-file commit $merge_base | head -n1 | cut -c6-)
+
+    # Create the octomerge: a temporary commit that has all the topic branches as
+    # parents.
+    local octomerge=$(echo 'git-rebase-all-merging' $branches |
+                        git commit-tree $tree -p `echo $branches | sed -e's/ / -p /g'`)
+    echo "$octomerge"
+  }
+
+  octomerge=$(_git-rebase-all_octopus_merge $branches)
   git update-ref refs/hidden/octomerge $octomerge || die "couldn't branch"
 
+  # git-rebase will replay merges with "recusrive" strategy, which makes our
+  # "octomerge" not replayed properly.
+  #
+  # But since git v2.22, with --rebase-merges, we can edit the interactive
+  # rebase todo list to replace the default (recusrive) merge by the magic
+  # octopus merge again.
+  export _GIT_REBASE_ALL_OCTOMERGE=$octomerge
+  export -f _git-rebase-all_octopus_merge
+  _git-rebase-all_editor() {
+    [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || set -x
+    local file="$1"
+
+    # Disable default merge line
+    sed -i -e "s/^merge -C ${_GIT_REBASE_ALL_OCTOMERGE:0:6}.*$/# REPLACED BY git-rebase-all, see END OF FILE # \0/" "$file"
+
+    # Append octopus merge command
+    cat <<'HEREDOC' >> "$file"
+
+# ADDED BY git-rebase-all
+exec [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || set -x && git checkout -q --detach "$(_git-rebase-all_octopus_merge HEAD $(git for-each-ref --format='%(refname)' refs/rewritten/git-rebase-all-merging\*))"
+
+HEREDOC
+    [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || cat "$file"
+  }
+
   # The money shot: rebase the octomerge onto the new upstream.
-  git rebase --rebase-merges $root refs/hidden/octomerge --onto $new_upstream ||
+  export -f _git-rebase-all_editor
+  GIT_EDITOR="bash -c '_git-rebase-all_editor \$@' --" \
+            git rebase --rebase-merges --interactive $root refs/hidden/octomerge --onto $new_upstream ||
     exit $? # if the rebase drops to shell, stop here.
 else
   [ x$action = x ] && usage
@@ -75,7 +110,7 @@ else
   git rebase --$action ||
     exit $? # if it drops to shell again, stop again.
   branches=`git log --format=%s refs/hidden/octomerge -1`
-  branches=${branches#merging }
+  branches=${branches#git-rebase-all-merging }
 fi
 
 git update-ref refs/hidden/octomerge_rebased HEAD || die "update-ref failed"
