@@ -28,7 +28,7 @@ for t in "${tests[@]}"
 do
   echo "Testing: $t"
   ret=0
-  bash -x $t || ret=$?
+  bash $t || ret=$?
   if [[ "$ret" -ne 0 ]]
   then
     echo -e "\n\nTest failed:\n - $t: FAILED\n\n"

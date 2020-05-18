@@ -16,6 +16,8 @@ skip!           skip current patch and continue
 require_work_tree_exists
 cd_to_toplevel
 
+[[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || set -x
+
 total_argc=$#
 while test $# != 0
 do
