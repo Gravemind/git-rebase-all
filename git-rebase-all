@@ -46,6 +46,27 @@ do
 done
 test $# -eq 2 || [ x$action != x ] || usage
 
+_git-rebase-all_octopus_merge() {
+  [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || set -x
+  local branches="$*"
+
+  # Use the tree from the common ancestor of all the branches. It probably
+  # doesn't matter what tree we use, but the merge-base is a) conveniently
+  # accessible and b) probably the most sensible thing. Conceptually, this
+  # equates to committing an octomerge that undoes everything the topic branches
+  # did, which is a well-defined operation.
+  local merge_base=$(git merge-base $branches)
+  local tree=$(git cat-file commit $merge_base | head -n1 | cut -c6-)
+
+  # Create the octomerge: a temporary commit that has all the topic branches as
+  # parents.
+  local octomerge=$(echo 'git-rebase-all-merging' $branches |
+                      git commit-tree $tree -p `echo $branches | sed -e's/ / -p /g'`)
+  echo "$octomerge"
+}
+# Make function available for rebase and rebase --continue
+export -f _git-rebase-all_octopus_merge
+
 if [ $# -eq 2 ]; then
   [ x$action != x ] && usage
   # Do setup
@@ -58,30 +79,11 @@ if [ $# -eq 2 ]; then
 
   echo rebasing $branches onto $new_upstream
 
-  _git-rebase-all_octopus_merge() {
-    [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || set -x
-    local branches="$*"
-
-    # Use the tree from the common ancestor of all the branches. It probably
-    # doesn't matter what tree we use, but the merge-base is a) conveniently
-    # accessible and b) probably the most sensible thing. Conceptually, this
-    # equates to committing an octomerge that undoes everything the topic branches
-    # did, which is a well-defined operation.
-    local merge_base=$(git merge-base $branches)
-    local tree=$(git cat-file commit $merge_base | head -n1 | cut -c6-)
-
-    # Create the octomerge: a temporary commit that has all the topic branches as
-    # parents.
-    local octomerge=$(echo 'git-rebase-all-merging' $branches |
-                        git commit-tree $tree -p `echo $branches | sed -e's/ / -p /g'`)
-    echo "$octomerge"
-  }
-
   octomerge=$(_git-rebase-all_octopus_merge $branches)
   git update-ref refs/hidden/octomerge $octomerge || die "couldn't branch"
 
   # git-rebase will replay merges with "recusrive" strategy, which makes our
-  # "octomerge" not replayed properly.
+  # "octomerge" replay fail if branches cannot be merged.
   #
   # But since git v2.22, with --rebase-merges, we can edit the interactive
   # rebase todo list to replace the default (recusrive) merge by the magic
@@ -89,21 +91,30 @@ if [ $# -eq 2 ]; then
   export _GIT_REBASE_ALL_OCTOMERGE=$octomerge
   export _GIT_REBASE_ALL_INTERACTIVE=$interactive
   export _GIT_REBASE_ALL_EDITOR="$(git var GIT_EDITOR)"
-  export -f _git-rebase-all_octopus_merge
   _git-rebase-all_editor() {
     [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || set -x
     local file="$1"
 
-    # Disable default merge line
-    sed -i -e "s/^merge -C ${_GIT_REBASE_ALL_OCTOMERGE:0:6}.*$/# REPLACED BY git-rebase-all, see END OF FILE # \0/" "$file"
+    # shorten hash
+    local octomerge=$(git rev-parse --short $_GIT_REBASE_ALL_OCTOMERGE)
 
-    # Append octopus merge command
-    cat <<'HEREDOC' >> "$file"
+    # Read git-rebase todo list to find the octomerge, and replace it by an exec
+    # of the full non-conflicting octomerge command.
+    perl -i -pe '
+      s|^merge -C '$octomerge'[a-z0-9]* (.*)\s*#.*|
+        # The default merge merges with HEAD, our octopus_merge needs it explicitly
+        $refs = "HEAD";
+        # Transform "label"s to their true ref name
+        $refs .= " refs/rewritten/" . join(" refs/rewritten/", split(/\s+/, $1));
+        "\n"
+        . "# BEGIN git-rebase-all patch\n"
+        . "# Original recursive merge:\n"
+        . "#" . $_ . ""
+        . "# New non-conflicting merge:\n"
+        . "exec git checkout -q --detach \"\$( _git-rebase-all_octopus_merge " . $refs . " )\"\n"
+        . "# END git-rebase-all patch\n"
+      |e' "$file"
 
-# ADDED BY git-rebase-all
-exec [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || set -x && git checkout -q --detach "$(_git-rebase-all_octopus_merge HEAD $(git for-each-ref --format='%(refname)' refs/rewritten/git-rebase-all-merging\*))"
-
-HEREDOC
     [[ "${GIT_REBASE_ALL_DEBUG:-0}" -eq 0 ]] || cat "$file"
 
     if [[ "${_GIT_REBASE_ALL_INTERACTIVE}" -eq 1 ]]; then
