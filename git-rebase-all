@@ -73,6 +73,17 @@ export -f _git-rebase-all_octopus_merge
 
 if [ $# -eq 2 ]; then
   [ x$action != x ] && usage
+
+  remember="
+Remember to use 'git rebase-all' instead of 'git rebase' for:
+
+  git rebase-all --continue
+  git rebase-all --skip
+  git rebase-all --abort
+
+"
+  echo -n "$remember"
+
   # Do setup
   new_upstream=$1
   root=$2
@@ -129,8 +140,12 @@ if [ $# -eq 2 ]; then
   # The money shot: rebase the octomerge onto the new upstream.
   export -f _git-rebase-all_editor
   GIT_EDITOR="bash -c '_git-rebase-all_editor \$@' --" \
-            git rebase --rebase-merges --interactive $root refs/hidden/octomerge --onto $new_upstream ||
-    exit $? # if the rebase drops to shell, stop here.
+            git rebase --rebase-merges --interactive $root refs/hidden/octomerge --onto $new_upstream || {
+    # if the rebase drops to shell, stop here.
+    r=$?
+    echo -n "$remember"
+    exit $r
+  }
 else
   [ x$action = x ] && usage
   # Pass the action through to git-rebase.
