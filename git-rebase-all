@@ -197,15 +197,19 @@ for i in ${!old_tips[@]}; do
   done
 done
 
-echo "Note: to revert, in case of failure:
-$(printf '%s\n' "${revert[@]}")
+echo "
+Note: You can REVERT with those commands:
+
+$(printf ' %s\n' "${revert[@]}")
 "
 
-echo "Now applying:"
+echo "Now applying:
+"
 for app in "${apply[@]}" ; do
-  echo "$app"
+  echo " $app"
   eval "$app" || die "branch failed, see above to revert"
 done
+echo
 
 # and clean up.
 git checkout -q ${branches%% *}
